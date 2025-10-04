@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Neon Runner</title>
+<style>
+  :root{
+    --bg:#020204;
+    --neon:#00FF7A;
+    --muted:#071012;
+    --font: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,#000013 0%, #020204 70%);color:var(--neon);font-family:var(--font);-webkit-font-smoothing:antialiased;}
+  .wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px}
+  h1{margin:0;font-size:20px;color:var(--neon);text-shadow:0 0 14px rgba(0,255,122,0.12)}
+  canvas{background: radial-gradient(circle at 20% 10%, rgba(0,255,122,0.02), transparent 30%), transparent;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,0.6);display:block}
+  .hud{display:flex;gap:12px;align-items:center}
+  .panel{background:linear-gradient(180deg, rgba(0,0,0,0.35), rgba(255,255,255,0.02));padding:8px 12px;border-radius:8px;border:1px solid rgba(0,255,122,0.12)}
+  .btn{border:1px solid rgba(0,255,122,0.18);padding:6px 10px;border-radius:6px;background:transparent;color:var(--neon);cursor:pointer}
+  #levelUpMsg{position:absolute;top:42%;left:50%;transform:translate(-50%,-50%);font-size:36px;font-weight:700;color:var(--neon);text-shadow:0 0 20px var(--neon);opacity:0;pointer-events:none;transition: opacity .35s ease;}
+  footer{font-size:12px;color:rgba(0,255,122,0.5)}
+  @media (max-width:640px){ canvas{width:92vw;height:64vw} }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Neon Runner</h1>
+    <div class="hud">
+      <div class="panel">Score: <span id="score">0</span></div>
+      <div class="panel">Lives: <span id="lives">3</span></div>
+      <div class="panel">Level: <span id="level">1</span></div>
+      <button id="restart" class="btn">Restart</button>
+    </div>
+    <canvas id="game" width="900" height="300"></canvas>
+    <div style="width:900px;display:flex;justify-content:space-between;align-items:center">
+      <div style="color:rgba(0,255,122,0.4);font-size:13px">Jump: Space / ↑ — Slide: ↓ — Tap to jump (mobile)</div>
+      <footer>Made with ❤️ — host on GitHub Pages</footer>
+    </div>
+  </div>
+  <div id="levelUpMsg">LEVEL UP!</div>
+
+<script>
+/* Neon Runner - single HTML file
+   Controls: Jump = Space / ArrowUp ; Slide = ArrowDown
+   Mobile: Tap = jump
+*/
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const neon = getComputedStyle(document.documentElement).getPropertyValue('--neon') || '#00FF7A';
+const scoreEl = document.getElementById('score');
+const livesEl = document.getElementById('lives');
+const levelEl = document.getElementById('level');
+const levelUpMsg = document.getElementById('levelUpMsg');
+
+let score = 0, lives = 3, level = 1;
+let running = true;
+scoreEl.innerText = score; livesEl.innerText = lives; levelEl.innerText = level;
+
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if(e.key===' ') e.preventDefault(); });
+window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+canvas.addEventListener('click', () => { // tap -> jump
+  if(!running) return;
+  player.jump();
+});
+
+// Player (auto-run visually — player stays horizontally fixed)
+const player = {
+  x: 120, baseline: H - 60, y: H - 60, w: 36, h: 48,
+  vy: 0, gravity: 0.9, jumpPower: -14, sliding: false,
+  slideTimer: 0,
+  jump(){
+    if(this.onGround() && !this.sliding){
+      this.vy = this.jumpPower;
+    }
+  },
+  slide(){
+    if(this.onGround() && !this.sliding){
+      this.sliding = true; this.slideTimer = 22; // frames
+    }
+  },
+  onGround(){ return this.y >= this.baseline; },
+  update(dt){
+    // jump physics
+    this.vy += this.gravity * dt;
+    this.y += this.vy * dt;
+    if(this.y > this.baseline){ this.y = this.baseline; this.vy = 0; }
+    // slide countdown
+    if(this.sliding){
+      this.slideTimer -= dt;
+      if(this.slideTimer <= 0) this.sliding = false;
+    }
+    // input
+    if((keys['arrowup'] || keys['w'] || keys[' ']) && this.onGround()) this.jump();
+    if((keys['arrowdown'] || keys['s']) && this.onGround()) this.slide();
+  },
+  draw(){
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    // sliding: lower height
+    const hh = this.sliding ? this.h * 0.5 : this.h;
+    const yy = this.sliding ? (this.h * 0.5) : 0;
+    // glow rect body
+    ctx.fillStyle = neon;
+    ctx.shadowColor = neon; ctx.shadowBlur = 18;
+    roundRect(ctx, -this.w/2, -hh - yy, this.w, hh, 6); ctx.fill();
+    ctx.shadowBlur = 0;
+    // small inner cockpit
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath(); ctx.ellipse(4, -hh/2 - yy/2, 6, 4, 0,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+};
+
+// Obstacles
+const obstacles = [];
+let spawnTimer = 0;
+let spawnMin = 60, spawnMax = 110; // frames
+let baseSpeed = 6;   // obstacle horizontal speed (pixels per frame approx)
+const speedScale = 1; // will be modified by level scaling
+
+function rand(min,max){ return Math.random()*(max-min)+min; }
+
+function spawnObstacle(){
+  // Types: 0 = tall block (must jump), 1 = low block (can slide), 2 = double (gap) etc.
+  const t = Math.random() < 0.6 ? 0 : 1;
+  if(Math.random() < 0.06) { // rare wide obstacle
+    obstacles.push({x: W + 40, y: H - 60, w: 80, h: 52, vy:0, type:0});
+    return;
+  }
+  if(t === 0){
+    // tall block (jump over)
+    obstacles.push({x: W + 20, y: H - 60 - 48, w: 36, h: 48, type:0});
+  } else {
+    // low block (slide under)
+    obstacles.push({x: W + 20, y: H - 60 - 18, w: 36, h: 18, type:1});
+  }
+}
+
+function updateObstacles(dt){
+  for(let i=obstacles.length-1;i>=0;i--){
+    const o = obstacles[i];
+    // Move left: speed increases slightly with level and score
+    const spd = baseSpeed + (level - 1) * 1.1 + (score/500)*0.6;
+    o.x -= spd * dt;
+    // collision box for player
+    const playerBox = {
+      x: player.x - player.w/2,
+      y: player.y - (player.sliding ? (player.h*0.5) : player.h),
+      w: player.w,
+      h: player.sliding ? (player.h*0.5) : player.h
+    };
+    const obstBox = { x: o.x, y: o.y - o.h, w: o.w, h: o.h };
+    if(rects(playerBox, obstBox)){
+      // if collision while sliding but obstacle is high, it's also collision — handled by rects
+      obstacles.splice(i,1);
+      lives--; livesEl.innerText = lives;
+      flashScreen();
+      if(lives <= 0) gameOver();
+      continue;
+    }
+    if(o.x + o.w < -20) {
+      obstacles.splice(i,1);
+      // survived obstacle -> score
+      score += 25;
+      scoreEl.innerText = score;
+      // difficulty scaling check (every 500 pts)
+      if(score > 0 && score % 500 ===
